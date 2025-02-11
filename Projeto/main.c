@@ -14,10 +14,12 @@
 #define I2C_SDA 14
 #define I2C_SCL 15
 
+#define ONBOARD_TEMP_SENSOR_GPIO 4
+
 #define RETURN_HOME_SSD(_ssd) memset(_ssd, 0, ssd1306_buffer_length)
 #define DELAY_MS(ms, call_back, flag)            \
     add_alarm_in_ms(ms, call_back, NULL, false); \
-    while (!timer_fired)                         \
+    while (!flag)                                \
         tight_loop_contents();                   \
     flag = false;
 
@@ -36,7 +38,7 @@ struct render_area frame_area = {
 
 uint8_t ssd[ssd1306_buffer_length];
 
-volatile bool timer_fired = false;
+volatile bool flag_timer = false;
 
 //======================================
 //  PROTOTIPOS
@@ -74,18 +76,11 @@ int main()
 
     setup_i2c();
     setup_oled();
+    setup_adc();
 
-    char buffer[16];
-    unsigned int cnt = 0;
     while (true)
     {
-        sprintf(buffer, "Teste: %d", cnt);
-        ssd1306_draw_string(ssd, 5, 0, buffer);
-        render_on_display(ssd, &frame_area);
-        cnt++;
-        RETURN_HOME_SSD(ssd);
-
-        DELAY_MS(1000, alarm_callback, timer_fired);
+        DELAY_MS(1000, alarm_callback, flag_timer);
     }
 }
 //======================================
@@ -94,6 +89,9 @@ int main()
 
 static void setup_adc(void)
 {
+    adc_init();
+
+    adc_set_temp_sensor_enabled(true);
 }
 
 static void setup_i2c(void)
@@ -127,8 +125,7 @@ static void setup_oled(void)
 
 int64_t alarm_callback(alarm_id_t id, __unused void *user_data)
 {
-    printf("Timer %d fired!\n", (int)id);
-    timer_fired = true;
+    flag_timer = true;
     // Can return a value here in us to fire in the future
     return 0;
 }
