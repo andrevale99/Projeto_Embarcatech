@@ -16,6 +16,10 @@
 
 #define ONBOARD_TEMP_SENSOR_GPIO 4
 
+#define BUTTON_A 5
+
+#define MAX_LEN_BUFFER 16
+
 #define RETURN_HOME_SSD(_ssd) memset(_ssd, 0, ssd1306_buffer_length)
 #define DELAY_MS(ms, call_back, flag)            \
     add_alarm_in_ms(ms, call_back, NULL, false); \
@@ -38,11 +42,24 @@ struct render_area frame_area = {
 
 uint8_t ssd[ssd1306_buffer_length];
 
+uint16_t TempSensor = 0;
+
 volatile bool flag_timer = false;
+
+char buffer[MAX_LEN_BUFFER];
+
+volatile void (*DisplayShow)(void) = NULL;
+volatile uint8_t choosePage = 0;
 
 //======================================
 //  PROTOTIPOS
 //======================================
+
+//  @brief Pagina inicial do sistema
+void hello_page(void);
+
+//  @param Pagina do sensor de temperatura
+void temp_page(void);
 
 //  @brief Funcão de configuracao do ADC
 static void setup_adc(void);
@@ -50,8 +67,8 @@ static void setup_adc(void);
 //  @brief Funcão de configuracao do I2C
 static void setup_i2c(void);
 
-//  @brief Funcão de configuracao do TIMER
-static void setup_timer(void);
+//  @brief Funcão de configuracao do GPIO
+static void setup_gpio(void);
 
 //  @brief Funcão de configuracao do DMA
 static void setup_dma(void);
@@ -67,6 +84,18 @@ static void setup_oled(void);
  */
 int64_t alarm_callback(alarm_id_t id, __unused void *user_data);
 
+/*
+ *  @brief Funcao de interrupcao para realizar a troca
+ *  de rotina ao apertar o botao
+ *
+ *  @param gpio o botao que foi pressionado (mapeado
+ *  durante o GPIO_setup())
+ *
+ *  @param events O motivo que foi realizado a interrupcao
+ *  (borda de descida do sinal do GPIO)
+ */
+void gpio_button_callback(uint gpio, uint32_t events);
+
 //======================================
 //  MAIN
 //======================================
@@ -77,15 +106,44 @@ int main()
     setup_i2c();
     setup_oled();
     setup_adc();
+    setup_gpio();
+
+    DisplayShow = hello_page;
 
     while (true)
     {
-        DELAY_MS(1000, alarm_callback, flag_timer);
+        // adc_select_input(ONBOARD_TEMP_SENSOR_GPIO);
+        // TempSensor = adc_read();
+
+        DisplayShow();
+
+        // DELAY_MS(1000, alarm_callback, flag_timer);
     }
 }
 //======================================
 //  FUNCS
 //======================================
+
+void hello_page(void)
+{
+    RETURN_HOME_SSD(ssd);
+    sprintf(&buffer[0], "BEM VINDO");
+    ssd1306_draw_string(ssd, 5, 2, buffer);
+
+    sprintf(&buffer[0], "Press the Botao");
+    ssd1306_draw_string(ssd, 5, 15, buffer);
+
+    render_on_display(ssd, &frame_area);
+}
+
+void temp_page(void)
+{
+    RETURN_HOME_SSD(ssd);
+
+    sprintf(&buffer[0], "TEMP PAGE");
+    ssd1306_draw_string(ssd, 5, 10, buffer);
+    render_on_display(ssd, &frame_area);
+}
 
 static void setup_adc(void)
 {
@@ -104,8 +162,15 @@ static void setup_i2c(void)
     gpio_pull_up(I2C_SCL);
 }
 
-static void setup_timer(void)
+static void setup_gpio(void)
 {
+    gpio_init(BUTTON_A);
+    gpio_set_dir(BUTTON_A, GPIO_IN);
+    gpio_pull_up(BUTTON_A);
+
+    // Configura a interrupção no GPIO do botão para borda de descida
+    gpio_set_irq_enabled_with_callback(BUTTON_A, GPIO_IRQ_EDGE_FALL,
+                                       true, gpio_button_callback);
 }
 
 static void setup_dma(void)
@@ -128,4 +193,17 @@ int64_t alarm_callback(alarm_id_t id, __unused void *user_data)
     flag_timer = true;
     // Can return a value here in us to fire in the future
     return 0;
+}
+
+void gpio_button_callback(uint gpio, uint32_t events)
+{
+    if (gpio == BUTTON_A)
+    {
+        if( choosePage % 2 == 0)
+            DisplayShow = temp_page;
+        else 
+            DisplayShow = hello_page;
+        
+        choosePage++;
+    }
 }
