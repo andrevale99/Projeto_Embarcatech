@@ -14,11 +14,18 @@
 #define I2C_SDA 14
 #define I2C_SCL 15
 
-#define ONBOARD_TEMP_SENSOR_GPIO 4
+#define TEMP_SENSOR_ADC_CHANNEL 4 // Canal ADC do sensor de Temperatura onboard
 
-#define BUTTON_A 5
+#define BUTTON_A 5 // Botao A do bitdoglab
+#define BUTTON_B 6 // Botao B do bitdoglab
 
-#define MAX_LEN_BUFFER 16
+#define MAX_LEN_BUFFER 16 // Tamanho maximo do buffer
+
+#define JOY_X_AXIS 26            // Pino de leitura do eixo X do joystick (conectado ao ADC)
+#define JOY_Y_AXIS 27            // Pino de leitura do eixo Y do joystick (conectado ao ADC)
+#define JOY_ADC_CHANNEL_X_AXIS 0 // Canal ADC para o eixo X do joystick
+#define JOY_ADC_CHANNEL_Y_AXIS 1 // Canal ADC para o eixo Y do joystick
+#define JOY_BUTTON 22            // Pino de leitura do botão do joystick
 
 #define RETURN_HOME_SSD(_ssd) memset(_ssd, 0, ssd1306_buffer_length)
 #define DELAY_MS(ms, call_back, flag)            \
@@ -112,12 +119,7 @@ int main()
 
     while (true)
     {
-        // adc_select_input(ONBOARD_TEMP_SENSOR_GPIO);
-        // TempSensor = adc_read();
-
         DisplayShow();
-
-        // DELAY_MS(1000, alarm_callback, flag_timer);
     }
 }
 //======================================
@@ -140,14 +142,25 @@ void temp_page(void)
 {
     RETURN_HOME_SSD(ssd);
 
+    // Leitura do valor do eixo X do joystick
+    adc_select_input(TEMP_SENSOR_ADC_CHANNEL); // Seleciona o canal ADC para o eixo X
+    DELAY_MS(2, alarm_callback, flag_timer);   // Pequeno delay para estabilidade
+    TempSensor = adc_read();                   // Lê o valor do eixo X (0-4095)
+
     sprintf(&buffer[0], "TEMP PAGE");
     ssd1306_draw_string(ssd, 5, 10, buffer);
+    sprintf(&buffer[0], "Temp: %d", TempSensor);
+    ssd1306_draw_string(ssd, 5, 12, buffer);
+
     render_on_display(ssd, &frame_area);
 }
 
 static void setup_adc(void)
 {
     adc_init();
+
+    adc_gpio_init(JOY_ADC_CHANNEL_X_AXIS); // Configura o pino VRX (eixo X) para entrada ADC
+    adc_gpio_init(JOY_ADC_CHANNEL_Y_AXIS); // Configura o pino VRY (eixo Y) para entrada ADC
 
     adc_set_temp_sensor_enabled(true);
 }
@@ -164,12 +177,18 @@ static void setup_i2c(void)
 
 static void setup_gpio(void)
 {
-    gpio_init(BUTTON_A);
-    gpio_set_dir(BUTTON_A, GPIO_IN);
+    gpio_init_mask((1<<BUTTON_A) | (1<<BUTTON_B));
+    gpio_set_dir_in_masked((1<<BUTTON_A) | (1<<BUTTON_B));
+
     gpio_pull_up(BUTTON_A);
+    gpio_pull_up(BUTTON_B);
 
     // Configura a interrupção no GPIO do botão para borda de descida
     gpio_set_irq_enabled_with_callback(BUTTON_A, GPIO_IRQ_EDGE_FALL,
+                                       true, gpio_button_callback);
+
+    // Configura a interrupção no GPIO do botão para borda de descida
+    gpio_set_irq_enabled_with_callback(BUTTON_B, GPIO_IRQ_EDGE_FALL,
                                        true, gpio_button_callback);
 }
 
@@ -197,13 +216,20 @@ int64_t alarm_callback(alarm_id_t id, __unused void *user_data)
 
 void gpio_button_callback(uint gpio, uint32_t events)
 {
-    if (gpio == BUTTON_A)
+    switch (gpio)
     {
-        if( choosePage % 2 == 0)
-            DisplayShow = temp_page;
-        else 
-            DisplayShow = hello_page;
-        
+    case BUTTON_A:
         choosePage++;
+        break;
+    case BUTTON_B:
+        choosePage--;
+        break;
+
+    default:
+        break;
     }
+    if (choosePage % 2 == 0)
+        DisplayShow = temp_page;
+    else
+        DisplayShow = hello_page;
 }
