@@ -21,13 +21,17 @@
 
 #define MAX_LEN_BUFFER 16 // Tamanho maximo do buffer
 
+// GPIOS e Canais ADC's do joystick (debug)
 #define JOY_X_AXIS 26            // Pino de leitura do eixo X do joystick (conectado ao ADC)
 #define JOY_Y_AXIS 27            // Pino de leitura do eixo Y do joystick (conectado ao ADC)
 #define JOY_ADC_CHANNEL_X_AXIS 0 // Canal ADC para o eixo X do joystick
 #define JOY_ADC_CHANNEL_Y_AXIS 1 // Canal ADC para o eixo Y do joystick
 #define JOY_BUTTON 22            // Pino de leitura do botão do joystick
 
+// Macro para colocar a escrita no inicoio do OLED
 #define RETURN_HOME_SSD(_ssd) memset(_ssd, 0, ssd1306_buffer_length)
+
+// Macro para o delay do TIMER sem travar a CPU
 #define DELAY_MS(ms, call_back, flag)            \
     add_alarm_in_ms(ms, call_back, NULL, false); \
     while (!flag)                                \
@@ -65,8 +69,11 @@ volatile uint8_t choosePage = 0;
 //  @brief Pagina inicial do sistema
 void hello_page(void);
 
-//  @param Pagina do sensor de temperatura
+//  @brief Pagina do sensor de temperatura
 void temp_page(void);
+
+//  @brief Pagina do jardim
+void jardim_page(void);
 
 //  @brief Funcão de configuracao do ADC
 static void setup_adc(void);
@@ -153,6 +160,11 @@ void temp_page(void)
     ssd1306_draw_string(ssd, 5, 12, buffer);
 
     render_on_display(ssd, &frame_area);
+}
+
+void jardim_page(void)
+{
+    RETURN_HOME_SSD(ssd);
 }
 
 static void setup_adc(void)
