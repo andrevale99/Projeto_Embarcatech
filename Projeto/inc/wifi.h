@@ -9,13 +9,7 @@
 
 #define WIFI_SSID "brisa-2532295" // Substitua pelo nome da sua rede Wi-Fi
 #define WIFI_PASS "zlgy1ssc"      // Substitua pela senha da sua rede Wi-Fi
-
-// // Buffer para respostas HTTP
-// #define HTTP_RESPONSE "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n" \
-//                       "<!DOCTYPE html><html><body>"                        \
-//                       "<h1>VISUALIZACAO DOS DADOS</h1>"                    \
-//                       "<p>OS DADOS SERIAL MOSTRADOS AQUI</p>"              \
-//                       "</body></html>\r\n"
+#define THINGSPEAK_API_KEY_WRITE "96B827LC3QSA2348"
 
 #define CYW43_ARCH_INIT_ERROR 1
 #define CONECTION_TIMEOUT 2

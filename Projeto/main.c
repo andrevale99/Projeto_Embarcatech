@@ -10,9 +10,7 @@
 #include "hardware/timer.h"
 
 #include "inc/ssd1306.h"
-
 #include "inc/personal.h"
-
 #include "wifi.h"
 
 #define I2C_SDA 14
@@ -50,7 +48,13 @@ struct render_area frame_area = {
 
 uint8_t ssd[ssd1306_buffer_length];
 
-uint16_t TempSensor = 0;
+struct DataHouse_t
+{
+    uint16_t TempSensor;
+    uint16_t UmidadeSolo;
+
+    uint16_t Portao;
+} data;
 
 volatile bool flag_timer = false;
 
@@ -115,23 +119,7 @@ int64_t alarm_callback(alarm_id_t id, __unused void *user_data);
 void gpio_button_callback(uint gpio, uint32_t events);
 
 // Função para criar a resposta HTTP
-void create_http_response(char *buffer, size_t len)
-{
-    snprintf(buffer, len,
-             "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n"
-             "<!DOCTYPE html>"
-             "<html>"
-             "<head>"
-             "  <meta charset=\"UTF-8\">"
-             "  <title>Controle do LED e Botões</title>"
-             "</head>"
-             "<body>"
-             "  <h1> Dados dos ambientes </h1>"
-             "<p> Temperatura: %d"
-             "</body>"
-             "</html>\r\n",
-             TempSensor);
-}
+void create_http_response(char *buffer, size_t len);
 
 //======================================
 //  MAIN
@@ -185,10 +173,10 @@ void hello_page(void)
 {
     RETURN_HOME_SSD(ssd);
     sprintf(&buffer[0], "BEM VINDO");
-    ssd1306_draw_string(ssd, 5, 2, buffer);
+    ssd1306_draw_string(ssd, 5, 10, buffer);
 
     sprintf(&buffer[0], "Press the Botao");
-    ssd1306_draw_string(ssd, 5, 15, buffer);
+    ssd1306_draw_string(ssd, 5, 20, buffer);
 
     render_on_display(ssd, &frame_area);
 }
@@ -199,15 +187,15 @@ void temp_page(void)
     // Leitura do valor do eixo X do joystick
     adc_select_input(TEMP_SENSOR_ADC_CHANNEL); // Seleciona o canal ADC para o eixo X
     DELAY_MS(2, alarm_callback, flag_timer);   // Pequeno delay para estabilidade
-    TempSensor = adc_read();                   // Lê o valor do eixo X (0-4095)
+    data.TempSensor = adc_read();              // Lê o valor do eixo X (0-4095)
 
     RETURN_HOME_SSD(ssd);
 
     sprintf(&buffer[0], "TEMP PAGE");
-    ssd1306_draw_string(ssd, 5, 2, buffer);
+    ssd1306_draw_string(ssd, 5, 5, buffer);
 
-    sprintf(&buffer[0], "Temp: %d", TempSensor);
-    ssd1306_draw_string(ssd, 5, 15, buffer);
+    sprintf(&buffer[0], "Temp: %d", data.TempSensor);
+    ssd1306_draw_string(ssd, 5, 18, buffer);
 
     render_on_display(ssd, &frame_area);
 }
@@ -219,10 +207,14 @@ void jardim_page(void)
     sprintf(&buffer[0], "Jardim");
     ssd1306_draw_string(ssd, 5, 2, buffer);
 
-    sprintf(&buffer[0], "Temperatura %d", TempSensor);
-    ssd1306_draw_string(ssd, 5, 15, buffer);
+    adc_select_input(TEMP_SENSOR_ADC_CHANNEL);
+    data.TempSensor = adc_read();
+    sprintf(&buffer[0], "Temperatura %d", data.TempSensor);
+    ssd1306_draw_string(ssd, 5, 18, buffer);
 
-    sprintf(&buffer[0], "Solo: S 1 U");
+    adc_select_input(JOY_ADC_CHANNEL_X_AXIS);
+    data.UmidadeSolo = adc_read();
+    sprintf(&buffer[0], "Solo: %d", data.UmidadeSolo);
     ssd1306_draw_string(ssd, 5, 28, buffer);
 
     render_on_display(ssd, &frame_area);
@@ -232,8 +224,11 @@ void http_page(void)
 {
     RETURN_HOME_SSD(ssd);
 
-    sprintf(buffer, "IP:%s", ip_pico);
+    sprintf(buffer, "IP:");
     ssd1306_draw_string(ssd, 5, 5, buffer);
+
+    sprintf(buffer, "%s", ip_pico);
+    ssd1306_draw_string(ssd, 5, 10, buffer);
 
     render_on_display(ssd, &frame_area);
 }
@@ -329,4 +324,23 @@ void gpio_button_callback(uint gpio, uint32_t events)
     default:
         break;
     }
+}
+
+void create_http_response(char *buffer, size_t len)
+{
+    snprintf(buffer, len,
+             "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n"
+             "<!DOCTYPE html>"
+             "<html>"
+             "<head>"
+             "  <meta charset=\"UTF-8\">"
+             "  <title>Controle do LED e Botões</title>"
+             "</head>"
+             "<body>"
+             "  <h1> Dados dos ambientes </h1>"
+             "<p> Temperatura Jardim: %d</p>"
+             "<p> Solo: %d</p>"
+             "</body>"
+             "</html>\r\n",
+             data.TempSensor, data.UmidadeSolo);
 }

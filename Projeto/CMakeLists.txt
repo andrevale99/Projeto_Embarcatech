@@ -42,26 +42,12 @@ pico_sdk_init()
 
 add_executable(Projeto main.c inc/ssd1306_i2c.c)
 
-#============================================================
-# Add the freertos_config for FreeRTOS-Kernel
-# add_library(freertos_config INTERFACE)
-
-# Select the heap port.  values between 1-4 will pick a heap.
-# set(FREERTOS_HEAP "4" CACHE STRING "" FORCE)
-
-# Select the native compile PORT
-# set(FREERTOS_PORT "TEMPLATE" CACHE STRING "" FORCE)
-
-# Adding the FreeRTOS-Kernel subdirectory
-# add_subdirectory(lib/FreeRTOS-Kernel FreeRTOS-Kernel)
-#============================================================
-
 pico_set_program_name(Projeto "Projeto")
 pico_set_program_version(Projeto "0.1")
 
 # Modify the below lines to enable/disable output over UART/USB
 pico_enable_stdio_uart(Projeto 0)
-pico_enable_stdio_usb(Projeto 1)
+pico_enable_stdio_usb(Projeto 0)
 
 # Add the standard library to the build
 target_link_libraries(Projeto
@@ -72,7 +58,6 @@ target_link_libraries(Projeto
     hardware_clocks
     hardware_timer
     pico_cyw43_arch_lwip_threadsafe_background
-    # freertos_kernel freertos_config
 )
 
 # Add the standard include files to the build
