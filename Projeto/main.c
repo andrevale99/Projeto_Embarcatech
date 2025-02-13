@@ -11,6 +11,10 @@
 
 #include "inc/ssd1306.h"
 
+#include "inc/personal.h"
+
+#include "wifi.h"
+
 #define I2C_SDA 14
 #define I2C_SCL 15
 
@@ -19,7 +23,7 @@
 #define BUTTON_A 5 // Botao A do bitdoglab
 #define BUTTON_B 6 // Botao B do bitdoglab
 
-#define MAX_LEN_BUFFER 16 // Tamanho maximo do buffer
+#define MAX_LEN_BUFFER UINT8_MAX // Tamanho maximo do buffer
 
 // GPIOS e Canais ADC's do joystick (debug)
 #define JOY_X_AXIS 26            // Pino de leitura do eixo X do joystick (conectado ao ADC)
@@ -30,13 +34,6 @@
 
 // Macro para colocar a escrita no inicoio do OLED
 #define RETURN_HOME_SSD(_ssd) memset(_ssd, 0, ssd1306_buffer_length)
-
-// Macro para o delay do TIMER sem travar a CPU
-#define DELAY_MS(ms, call_back, flag)            \
-    add_alarm_in_ms(ms, call_back, NULL, false); \
-    while (!flag)                                \
-        tight_loop_contents();                   \
-    flag = false;
 
 //======================================
 //  VARS GLOBAIS
@@ -62,6 +59,11 @@ char buffer[MAX_LEN_BUFFER];
 volatile void (*DisplayShow)(void) = NULL;
 volatile uint8_t choosePage = 0;
 
+char ip_pico[50];
+struct netif *netif_pico;
+
+extern char buffer_response_http[MAX_TCP_BYTES_SEND];
+
 //======================================
 //  PROTOTIPOS
 //======================================
@@ -75,6 +77,9 @@ void temp_page(void);
 //  @brief Pagina do jardim
 void jardim_page(void);
 
+//  @brief Pagina do servidor HTPP (situacao)
+void http_page(void);
+
 //  @brief Funcão de configuracao do ADC
 static void setup_adc(void);
 
@@ -84,17 +89,16 @@ static void setup_i2c(void);
 //  @brief Funcão de configuracao do GPIO
 static void setup_gpio(void);
 
-//  @brief Funcão de configuracao do DMA
-static void setup_dma(void);
-
 //  @brief Funcão de configuracao do DISPLAY OLED
 static void setup_oled(void);
 
 /**
- *  @brief Funcao de call_back do estouro do TIMER
+ *  @brief Funcao de call_back (interrupcao) do estouro do TIMER
  *
  *  @param id ID do processo
  *  @param *user_data variaveis do sistema (sem utilidade)
+ *
+ *  @note Usado como delay
  */
 int64_t alarm_callback(alarm_id_t id, __unused void *user_data);
 
@@ -110,6 +114,25 @@ int64_t alarm_callback(alarm_id_t id, __unused void *user_data);
  */
 void gpio_button_callback(uint gpio, uint32_t events);
 
+// Função para criar a resposta HTTP
+void create_http_response(char *buffer, size_t len)
+{
+    snprintf(buffer, len,
+             "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n"
+             "<!DOCTYPE html>"
+             "<html>"
+             "<head>"
+             "  <meta charset=\"UTF-8\">"
+             "  <title>Controle do LED e Botões</title>"
+             "</head>"
+             "<body>"
+             "  <h1> Dados dos ambientes </h1>"
+             "<p> Temperatura: %d"
+             "</body>"
+             "</html>\r\n",
+             TempSensor);
+}
+
 //======================================
 //  MAIN
 //======================================
@@ -122,12 +145,37 @@ int main()
     setup_adc();
     setup_gpio();
 
+    wifi_start_station_mode(&ip_pico[0], 50);
+
+    if (start_http_server() == ERR_OK)
+    {
+        RETURN_HOME_SSD(ssd);
+
+        sprintf(&buffer[0], "SERVER HTTP");
+        ssd1306_draw_string(ssd, 5, 2, buffer);
+
+        sprintf(&buffer[0], "ON");
+        ssd1306_draw_string(ssd, 5, 15, buffer);
+
+        render_on_display(ssd, &frame_area);
+
+        DELAY_MS(2000, alarm_callback, flag_timer);
+    }
+
     DisplayShow = hello_page;
 
     while (true)
     {
         DisplayShow();
+
+        create_http_response(buffer_response_http, MAX_TCP_BYTES_SEND);
+
+        cyw43_arch_poll(); // Necessário para manter o Wi-Fi ativo
     }
+
+    cyw43_arch_deinit();
+
+    return 0;
 }
 //======================================
 //  FUNCS
@@ -147,17 +195,19 @@ void hello_page(void)
 
 void temp_page(void)
 {
-    RETURN_HOME_SSD(ssd);
 
     // Leitura do valor do eixo X do joystick
     adc_select_input(TEMP_SENSOR_ADC_CHANNEL); // Seleciona o canal ADC para o eixo X
     DELAY_MS(2, alarm_callback, flag_timer);   // Pequeno delay para estabilidade
     TempSensor = adc_read();                   // Lê o valor do eixo X (0-4095)
 
+    RETURN_HOME_SSD(ssd);
+
     sprintf(&buffer[0], "TEMP PAGE");
-    ssd1306_draw_string(ssd, 5, 10, buffer);
+    ssd1306_draw_string(ssd, 5, 2, buffer);
+
     sprintf(&buffer[0], "Temp: %d", TempSensor);
-    ssd1306_draw_string(ssd, 5, 12, buffer);
+    ssd1306_draw_string(ssd, 5, 15, buffer);
 
     render_on_display(ssd, &frame_area);
 }
@@ -165,6 +215,27 @@ void temp_page(void)
 void jardim_page(void)
 {
     RETURN_HOME_SSD(ssd);
+
+    sprintf(&buffer[0], "Jardim");
+    ssd1306_draw_string(ssd, 5, 2, buffer);
+
+    sprintf(&buffer[0], "Temperatura %d", TempSensor);
+    ssd1306_draw_string(ssd, 5, 15, buffer);
+
+    sprintf(&buffer[0], "Solo: S 1 U");
+    ssd1306_draw_string(ssd, 5, 28, buffer);
+
+    render_on_display(ssd, &frame_area);
+}
+
+void http_page(void)
+{
+    RETURN_HOME_SSD(ssd);
+
+    sprintf(buffer, "IP:%s", ip_pico);
+    ssd1306_draw_string(ssd, 5, 5, buffer);
+
+    render_on_display(ssd, &frame_area);
 }
 
 static void setup_adc(void)
@@ -189,8 +260,8 @@ static void setup_i2c(void)
 
 static void setup_gpio(void)
 {
-    gpio_init_mask((1<<BUTTON_A) | (1<<BUTTON_B));
-    gpio_set_dir_in_masked((1<<BUTTON_A) | (1<<BUTTON_B));
+    gpio_init_mask((1 << BUTTON_A) | (1 << BUTTON_B));
+    gpio_set_dir_in_masked((1 << BUTTON_A) | (1 << BUTTON_B));
 
     gpio_pull_up(BUTTON_A);
     gpio_pull_up(BUTTON_B);
@@ -202,10 +273,6 @@ static void setup_gpio(void)
     // Configura a interrupção no GPIO do botão para borda de descida
     gpio_set_irq_enabled_with_callback(BUTTON_B, GPIO_IRQ_EDGE_FALL,
                                        true, gpio_button_callback);
-}
-
-static void setup_dma(void)
-{
 }
 
 static void setup_oled(void)
@@ -240,8 +307,26 @@ void gpio_button_callback(uint gpio, uint32_t events)
     default:
         break;
     }
-    if (choosePage % 2 == 0)
-        DisplayShow = temp_page;
-    else
+
+    switch (choosePage % 5)
+    {
+    case 0:
         DisplayShow = hello_page;
+        break;
+
+    case 1:
+        DisplayShow = temp_page;
+        break;
+
+    case 3:
+        DisplayShow = jardim_page;
+        break;
+
+    case 4:
+        DisplayShow = http_page;
+        break;
+
+    default:
+        break;
+    }
 }
