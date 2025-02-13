@@ -153,7 +153,7 @@ int main()
 
         render_on_display(ssd, &frame_area);
 
-        DELAY_MS(1, alarm_callback, flag_timer);
+        DELAY_MS(250, alarm_callback, flag_timer);
     }
 
     DisplayShow = hello_page;
@@ -165,13 +165,13 @@ int main()
     {
         DisplayShow();
 
-        if (UpdateReponseTime = 500)
+        if (UpdateReponseTime == 100)
         {
             create_http_response(buffer_response_http, MAX_TCP_BYTES_SEND);
             UpdateReponseTime = 0;
         }
 
-        if (PortaoTimer == 500)
+        if (PortaoTimer == 50)
         {
             gpio_put(LED_G, 0);
             gpio_put(LED_R, 1);
@@ -181,7 +181,7 @@ int main()
 
         cyw43_arch_poll(); // Necessário para manter o Wi-Fi ativo
 
-        DELAY_MS(1, alarm_callback, flag_timer);
+        DELAY_MS(100, alarm_callback, flag_timer);
     }
 
     cyw43_arch_deinit();
@@ -203,6 +203,9 @@ void hello_page(void)
 
     sprintf(&buffer[0], "%d", PortaoTimer);
     ssd1306_draw_string(ssd, 5, 28, buffer);
+
+        sprintf(&buffer[0], "%d", UpdateReponseTime);
+    ssd1306_draw_string(ssd, 5, 35, buffer);
 
     render_on_display(ssd, &frame_area);
 }
