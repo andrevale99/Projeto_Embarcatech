@@ -1,2 +1,2 @@
 build
-inc/FreeRTOSConfig.h
+./inc/FreeRTOSConfig.h
