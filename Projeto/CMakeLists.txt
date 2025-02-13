@@ -5,7 +5,6 @@ cmake_minimum_required(VERSION 3.13)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
 # Initialise pico_sdk from installed location
 # (note this can come from environment, CMake cache etc)
 
@@ -28,6 +27,8 @@ set(PICO_BOARD pico_w CACHE STRING "Board type")
 # Pull in Raspberry Pi Pico SDK (must be before project)
 include(pico_sdk_import.cmake)
 
+include_directories(${CMAKE_CURRENT_LIST_DIR}/lib/FreeRTOS-Kernel/include)
+
 project(Projeto C CXX ASM)
 
 # Initialise the Raspberry Pi Pico SDK
@@ -36,6 +37,18 @@ pico_sdk_init()
 # Add executable. Default name is the project name, version 0.1
 
 add_executable(Projeto main.c inc/ssd1306_i2c.c)
+
+# Add the freertos_config for FreeRTOS-Kernel
+add_library(freertos_config INTERFACE)
+
+# Select the heap port.  values between 1-4 will pick a heap.
+set(FREERTOS_HEAP "4" CACHE STRING "" FORCE)
+
+# Select the native compile PORT
+set(FREERTOS_PORT "TEMPLATE" CACHE STRING "" FORCE)
+
+# Adding the FreeRTOS-Kernel subdirectory
+add_subdirectory(lib/FreeRTOS-Kernel FreeRTOS-Kernel)
 
 pico_set_program_name(Projeto "Projeto")
 pico_set_program_version(Projeto "0.1")
@@ -52,6 +65,7 @@ target_link_libraries(Projeto
     hardware_adc
     hardware_clocks
     hardware_timer
+    freertos_kernel freertos_config
 )
 
 # Add the standard include files to the build
