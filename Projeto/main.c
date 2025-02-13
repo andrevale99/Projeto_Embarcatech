@@ -30,6 +30,9 @@
 #define JOY_ADC_CHANNEL_Y_AXIS 1 // Canal ADC para o eixo Y do joystick
 #define JOY_BUTTON 22            // Pino de leitura do botão do joystick
 
+#define LED_R 13
+#define LED_G 11
+
 // Macro para colocar a escrita no inicoio do OLED
 #define RETURN_HOME_SSD(_ssd) memset(_ssd, 0, ssd1306_buffer_length)
 
@@ -67,6 +70,9 @@ char ip_pico[50];
 struct netif *netif_pico;
 
 extern char buffer_response_http[MAX_TCP_BYTES_SEND];
+
+volatile uint16_t UpdateReponseTime = 0;
+volatile uint16_t PortaoTimer = 0;
 
 //======================================
 //  PROTOTIPOS
@@ -147,18 +153,35 @@ int main()
 
         render_on_display(ssd, &frame_area);
 
-        DELAY_MS(2000, alarm_callback, flag_timer);
+        DELAY_MS(1, alarm_callback, flag_timer);
     }
 
     DisplayShow = hello_page;
+
+    gpio_put(LED_G, 0);
+    gpio_put(LED_R, 1);
 
     while (true)
     {
         DisplayShow();
 
-        create_http_response(buffer_response_http, MAX_TCP_BYTES_SEND);
+        if (UpdateReponseTime = 500)
+        {
+            create_http_response(buffer_response_http, MAX_TCP_BYTES_SEND);
+            UpdateReponseTime = 0;
+        }
+
+        if (PortaoTimer == 500)
+        {
+            gpio_put(LED_G, 0);
+            gpio_put(LED_R, 1);
+
+            PortaoTimer = 0;
+        }
 
         cyw43_arch_poll(); // Necessário para manter o Wi-Fi ativo
+
+        DELAY_MS(1, alarm_callback, flag_timer);
     }
 
     cyw43_arch_deinit();
@@ -177,6 +200,9 @@ void hello_page(void)
 
     sprintf(&buffer[0], "Press the Botao");
     ssd1306_draw_string(ssd, 5, 20, buffer);
+
+    sprintf(&buffer[0], "%d", PortaoTimer);
+    ssd1306_draw_string(ssd, 5, 28, buffer);
 
     render_on_display(ssd, &frame_area);
 }
@@ -255,11 +281,15 @@ static void setup_i2c(void)
 
 static void setup_gpio(void)
 {
-    gpio_init_mask((1 << BUTTON_A) | (1 << BUTTON_B));
-    gpio_set_dir_in_masked((1 << BUTTON_A) | (1 << BUTTON_B));
+    gpio_init_mask((1 << BUTTON_A) | (1 << BUTTON_B) | (1 << JOY_BUTTON) |
+                   (1 << LED_G) | (1 << LED_R));
+
+    gpio_set_dir_in_masked((1 << BUTTON_A) | (1 << BUTTON_B) | (1 << JOY_BUTTON));
+    gpio_set_dir_out_masked((1 << LED_G) | (1 << LED_R));
 
     gpio_pull_up(BUTTON_A);
     gpio_pull_up(BUTTON_B);
+    gpio_pull_up(JOY_BUTTON);
 
     // Configura a interrupção no GPIO do botão para borda de descida
     gpio_set_irq_enabled_with_callback(BUTTON_A, GPIO_IRQ_EDGE_FALL,
@@ -267,6 +297,10 @@ static void setup_gpio(void)
 
     // Configura a interrupção no GPIO do botão para borda de descida
     gpio_set_irq_enabled_with_callback(BUTTON_B, GPIO_IRQ_EDGE_FALL,
+                                       true, gpio_button_callback);
+
+    // Configura a interrupção no GPIO do botão para borda de descida
+    gpio_set_irq_enabled_with_callback(JOY_BUTTON, GPIO_IRQ_EDGE_FALL,
                                        true, gpio_button_callback);
 }
 
@@ -283,6 +317,9 @@ static void setup_oled(void)
 
 int64_t alarm_callback(alarm_id_t id, __unused void *user_data)
 {
+    UpdateReponseTime++;
+    PortaoTimer++;
+
     flag_timer = true;
     // Can return a value here in us to fire in the future
     return 0;
@@ -297,6 +334,12 @@ void gpio_button_callback(uint gpio, uint32_t events)
         break;
     case BUTTON_B:
         choosePage--;
+        break;
+
+    case JOY_BUTTON:
+        gpio_put(LED_G, 1);
+        gpio_put(LED_R, 0);
+        PortaoTimer = 0;
         break;
 
     default:
