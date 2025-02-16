@@ -9,8 +9,10 @@
 #include "hardware/clocks.h"
 #include "hardware/timer.h"
 
-#include "inc/ssd1306.h"
-#include "inc/personal.h"
+#include "lwip/dns.h"
+
+#include "ssd1306.h"
+#include "Personal_defs.h"
 #include "wifi.h"
 
 #define I2C_SDA 14
@@ -51,14 +53,6 @@ struct render_area frame_area = {
 
 uint8_t ssd[ssd1306_buffer_length];
 
-struct DataHouse_t
-{
-    uint16_t TempSensor;
-    uint16_t UmidadeSolo;
-
-    uint16_t Portao;
-} data;
-
 volatile bool flag_timer = false;
 
 char buffer[MAX_LEN_BUFFER];
@@ -67,7 +61,8 @@ volatile void (*DisplayShow)(void) = NULL;
 volatile uint8_t choosePage = 0;
 
 char ip_pico[50];
-struct netif *netif_pico;
+ip_addr_t server_ip;
+struct tcp_pcb *tcp_client_pcb;
 
 extern char buffer_response_http[MAX_TCP_BYTES_SEND];
 
@@ -124,9 +119,6 @@ int64_t alarm_callback(alarm_id_t id, __unused void *user_data);
  */
 void gpio_button_callback(uint gpio, uint32_t events);
 
-// Função para criar a resposta HTTP
-void create_http_response(char *buffer, size_t len);
-
 //======================================
 //  MAIN
 //======================================
@@ -141,21 +133,6 @@ int main()
 
     wifi_start_station_mode(&ip_pico[0], 50);
 
-    if (start_http_server() == ERR_OK)
-    {
-        RETURN_HOME_SSD(ssd);
-
-        sprintf(&buffer[0], "SERVER HTTP");
-        ssd1306_draw_string(ssd, 5, 2, buffer);
-
-        sprintf(&buffer[0], "ON");
-        ssd1306_draw_string(ssd, 5, 15, buffer);
-
-        render_on_display(ssd, &frame_area);
-
-        DELAY_MS(250, alarm_callback, flag_timer);
-    }
-
     DisplayShow = hello_page;
 
     gpio_put(LED_G, 0);
@@ -165,19 +142,28 @@ int main()
     {
         DisplayShow();
 
-        if (UpdateReponseTime == 100)
+        if (UpdateReponseTime >= 100)
         {
-            create_http_response(buffer_response_http, MAX_TCP_BYTES_SEND);
+            dns_gethostbyname(THINGSPEAK_HOST, &server_ip, dns_callback, NULL);
+
             UpdateReponseTime = 0;
         }
 
-        if (PortaoTimer == 50)
+        if (PortaoTimer >= 50)
         {
             gpio_put(LED_G, 0);
             gpio_put(LED_R, 1);
 
             PortaoTimer = 0;
         }
+
+        // Leitura do valor do eixo X do joystick
+        adc_select_input(TEMP_SENSOR_ADC_CHANNEL); // Seleciona o canal ADC para o eixo X
+        DELAY_MS(2, alarm_callback, flag_timer);   // Pequeno delay para estabilidade
+        data.TempSensor = adc_read();
+
+        adc_select_input(JOY_ADC_CHANNEL_X_AXIS);
+        data.UmidadeSolo = adc_read();
 
         cyw43_arch_poll(); // Necessário para manter o Wi-Fi ativo
 
@@ -204,7 +190,7 @@ void hello_page(void)
     sprintf(&buffer[0], "%d", PortaoTimer);
     ssd1306_draw_string(ssd, 5, 28, buffer);
 
-        sprintf(&buffer[0], "%d", UpdateReponseTime);
+    sprintf(&buffer[0], "%d", UpdateReponseTime);
     ssd1306_draw_string(ssd, 5, 35, buffer);
 
     render_on_display(ssd, &frame_area);
@@ -212,11 +198,6 @@ void hello_page(void)
 
 void temp_page(void)
 {
-
-    // Leitura do valor do eixo X do joystick
-    adc_select_input(TEMP_SENSOR_ADC_CHANNEL); // Seleciona o canal ADC para o eixo X
-    DELAY_MS(2, alarm_callback, flag_timer);   // Pequeno delay para estabilidade
-    data.TempSensor = adc_read();              // Lê o valor do eixo X (0-4095)
 
     RETURN_HOME_SSD(ssd);
 
@@ -236,13 +217,9 @@ void jardim_page(void)
     sprintf(&buffer[0], "Jardim");
     ssd1306_draw_string(ssd, 5, 2, buffer);
 
-    adc_select_input(TEMP_SENSOR_ADC_CHANNEL);
-    data.TempSensor = adc_read();
     sprintf(&buffer[0], "Temperatura %d", data.TempSensor);
     ssd1306_draw_string(ssd, 5, 18, buffer);
 
-    adc_select_input(JOY_ADC_CHANNEL_X_AXIS);
-    data.UmidadeSolo = adc_read();
     sprintf(&buffer[0], "Solo: %d", data.UmidadeSolo);
     ssd1306_draw_string(ssd, 5, 28, buffer);
 
@@ -370,23 +347,4 @@ void gpio_button_callback(uint gpio, uint32_t events)
     default:
         break;
     }
-}
-
-void create_http_response(char *buffer, size_t len)
-{
-    snprintf(buffer, len,
-             "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n"
-             "<!DOCTYPE html>"
-             "<html>"
-             "<head>"
-             "  <meta charset=\"UTF-8\">"
-             "  <title>Controle do LED e Botões</title>"
-             "</head>"
-             "<body>"
-             "  <h1> Dados dos ambientes </h1>"
-             "<p> Temperatura Jardim: %d</p>"
-             "<p> Solo: %d</p>"
-             "</body>"
-             "</html>\r\n",
-             data.TempSensor, data.UmidadeSolo);
 }

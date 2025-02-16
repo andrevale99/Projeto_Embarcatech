@@ -27,10 +27,6 @@ set(PICO_BOARD pico_w CACHE STRING "Board type")
 # Pull in Raspberry Pi Pico SDK (must be before project)
 include(pico_sdk_import.cmake)
 
-#============================================================
-# include_directories(${CMAKE_CURRENT_LIST_DIR}/lib/FreeRTOS-Kernel/include)
-#============================================================
-
 include_directories(${CMAKE_CURRENT_LIST_DIR}/inc)
 
 project(Projeto C CXX ASM)
@@ -46,8 +42,8 @@ pico_set_program_name(Projeto "Projeto")
 pico_set_program_version(Projeto "0.1")
 
 # Modify the below lines to enable/disable output over UART/USB
-pico_enable_stdio_uart(Projeto 0)
-pico_enable_stdio_usb(Projeto 0)
+pico_enable_stdio_uart(Projeto 1)
+pico_enable_stdio_usb(Projeto 1)
 
 # Add the standard library to the build
 target_link_libraries(Projeto
@@ -58,6 +54,7 @@ target_link_libraries(Projeto
     hardware_clocks
     hardware_timer
     pico_cyw43_arch_lwip_threadsafe_background
+    pico_lwip_http
 )
 
 # Add the standard include files to the build

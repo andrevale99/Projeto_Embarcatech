@@ -1,5 +1,5 @@
-#ifndef PERSONAL_H
-#define PERSONAL_H
+#ifndef PERSONAL_DEFS_H
+#define PERSONAL_DEFS_H
 
 #include "hardware/clocks.h"
 #include "hardware/timer.h"
@@ -10,5 +10,13 @@
     while (!flag)                                \
         tight_loop_contents();                   \
     flag = false;
+
+struct DataHouse_t
+{
+    uint16_t TempSensor;
+    uint16_t UmidadeSolo;
+
+    uint16_t Portao;
+} data;
 
 #endif
