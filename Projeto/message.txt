@@ -1,0 +1,495 @@
+/**Escrito por Bruno Bezerra Bastos
+ * Curso do programa EMBARCATECH
+ * Matrícula 202421511720208
+ * Tarefa da Unidade 7
+ * Vídeo da apresentação:
+ * 
+ * Vídeos para testar diferentes frequências:
+ * https://www.youtube.com/watch?v=GwForkCsC0A
+ * https://www.youtube.com/watch?v=Bj2GVOR7WHg
+ */
+
+#include <stdio.h>
+#include <math.h>
+#include "pico/stdlib.h"
+#include "hardware/adc.h"
+#include "hardware/dma.h"
+#include "hardware/i2c.h"
+#include "inc/ssd1306.h"
+#include "hardware/timer.h"
+
+#include "wifi.h"
+#include "pico/cyw43_arch.h"
+#include "lwip/dns.h"
+#include "lwip/pbuf.h"
+#include "lwip/udp.h"
+#include "lwip/netif.h"
+#include "lwip/tcp.h"
+#include "lwip/init.h"
+// #include "lwip/sockets.h"
+// #include "lwip/netdb.h"
+// #include "lwip/inet.h"
+// #include "lwip/apps/http_client.h"
+
+#define BTN_A 5
+#define BTN_B 6
+#define LED_R 13
+#define LED_G 11
+#define LED_B 12
+
+#define MIC_CHANNEL 2
+#define MIC_PIN (26 + MIC_CHANNEL)
+#define SAMPLES 512 // Potência de 2 para FFT
+#define ADC_MAX 3.3f
+#define ADC_BASE_CLOCK 48000000.f
+#define ADC_CLOCK_DIV 20000 //18750
+
+#define I2C_PORT i2c1
+#define I2C_SDA 15
+#define I2C_SCL 14
+#define NUM_BARRAS 32
+
+#define MAX_FREQUENCIAS 10  
+#define HISTORICO_SIZE 20  
+#define LIMIAR_CONSISTENCIA 0.8
+#define LIMIAR_AMPLITUDE 3.5
+#define TOLERANCIA_FREQ 5
+
+// #define WIFI_SSID "Ap401"
+// #define WIFI_PASS "P1st4ch3"
+#define THINGSPEAK_API_KEY "BD7V1QKTHL4UN7RS"
+#define THINGSPEAK_HOST "api.thingspeak.com"
+#define THINGSPEAK_PORT 80
+
+char ip_pico[50];
+ip_addr_t server_ip;
+struct tcp_pcb *tcp_client_pcb;
+float enviar_freq = 666;
+extern char buffer_response_http[MAX_TCP_BYTES_SEND];
+
+#define DEBOUNCE_MS 50
+#define LONG_PRESS 1000
+volatile bool botaoPressionado = false;
+volatile uint32_t ultimoDebounce = 0;
+volatile uint32_t tempoPressionado = 0;
+volatile bool verificandoLongPress = false;
+void botao_pressionado(uint gpio, uint32_t events);
+
+void print_texto(int x, int y, int tam, char * msg);
+void plot_espectro();
+void preencher_barras();
+void setup_timer_menu();
+bool callback_timer(repeating_timer_t *t);
+void gerar_lut(int n);
+void amostrar_mic(int n);
+float calc_frequencia_dominante(float *real, float *imag, int n, float fs);
+void calc_frequencias_dominantes(float *real, float *imag, int n, float fs, 
+    float *freqs, float *amps, int max_freqs);
+void fft_radix2(float real[], float imag[], int n);
+void atualizar_historico(float *frequencias, float *amplitudes, int num_freqs);
+bool verificar_frequencias(float *frequencias, float *amplitudes);
+// void conectar_wifi();
+void enviar_dado_thingspeak(float valor);
+void setup();
+void loop();
+
+typedef struct {
+    float frequencia;
+    float amplitude_media;
+    int ocorrencias;
+} FrequenciaDominante;
+FrequenciaDominante historico_frequencias[MAX_FREQUENCIAS];
+float frequencias[MAX_FREQUENCIAS];
+float amplitudes[MAX_FREQUENCIAS];
+
+typedef enum{
+    AGUARDANDO,
+    MONITORAMENTO,
+    GRAVACAO
+} ModoOperacional;
+ModoOperacional modo_op = AGUARDANDO;
+
+
+int historico_cont = 0;
+float historico_amplitudes[HISTORICO_SIZE][MAX_FREQUENCIAS];
+int historico_index = 0;
+
+// MONITOR
+ssd1306_t disp;
+
+// DMA
+uint dma_channel;
+dma_channel_config dma_cfg;
+uint16_t adc_buffer[SAMPLES];
+
+// Look-up table para seno e cosseno
+float sin_lut[SAMPLES / 2];
+float cos_lut[SAMPLES / 2];
+
+float fs = ADC_BASE_CLOCK / ADC_CLOCK_DIV;
+float freq_dominante = 0.0;
+float real[SAMPLES], imag[SAMPLES] = {0};
+int espectro[NUM_BARRAS] = {0};
+
+int main() {
+    setup();
+    loop();
+}
+
+void setup() {
+    stdio_init_all();
+    gerar_lut(SAMPLES);
+    
+    // iniciar botões e led
+    gpio_init(BTN_A);
+    gpio_set_dir(BTN_A, GPIO_IN);
+    gpio_pull_up(BTN_A);
+    gpio_set_irq_enabled_with_callback(BTN_A, GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE, true, botao_pressionado);
+    gpio_init(LED_R);
+    gpio_init(LED_G);
+    gpio_init(LED_B);
+    gpio_set_dir(LED_R, GPIO_OUT);
+    gpio_set_dir(LED_G, GPIO_OUT);
+    gpio_set_dir(LED_B, GPIO_OUT);
+    gpio_put(LED_R, 0);
+    gpio_put(LED_G, 0);
+    gpio_put(LED_B, 0);
+
+    // conectar_wifi();
+    sleep_ms(5000);
+    printf("sta mode");
+    wifi_start_station_mode();
+
+    // inicializar OLED
+    i2c_init(I2C_PORT, 400*1000);
+    gpio_set_function(I2C_SDA, GPIO_FUNC_I2C);
+    gpio_set_function(I2C_SCL, GPIO_FUNC_I2C);
+    gpio_pull_up(I2C_SDA);
+    gpio_pull_up(I2C_SCL);
+    disp.external_vcc=false;
+    ssd1306_init(&disp, 128, 64, 0x3C, I2C_PORT);
+    ssd1306_clear(&disp);
+
+    // Inicializar MIC
+    adc_gpio_init(MIC_PIN);
+    adc_init();
+    adc_select_input(MIC_CHANNEL);
+    adc_fifo_setup(true, true, 1, false, false);
+    adc_set_clkdiv(ADC_CLOCK_DIV);
+    
+    dma_channel = dma_claim_unused_channel(true);
+    dma_cfg = dma_channel_get_default_config(dma_channel);
+    channel_config_set_transfer_data_size(&dma_cfg, DMA_SIZE_16);
+    channel_config_set_read_increment(&dma_cfg, false);
+    channel_config_set_write_increment(&dma_cfg, true);
+    channel_config_set_dreq(&dma_cfg, DREQ_ADC);
+
+    
+    setup_timer_menu();
+    dns_gethostbyname(THINGSPEAK_HOST, &server_ip, dns_callback, NULL); //  testar com timer
+
+}
+
+void loop(){
+    
+    while (true) {
+        amostrar_mic(SAMPLES);
+        for (int i = 0; i < SAMPLES; i++) {
+            real[i] = adc_buffer[i] * ADC_MAX / (1 << 12u);
+            imag[i] = 0;
+        }
+        fft_radix2(real, imag, SAMPLES);
+
+        calc_frequencias_dominantes(real, imag, SAMPLES, fs, frequencias, amplitudes, MAX_FREQUENCIAS);
+        freq_dominante = frequencias[0];
+        
+
+        if (verificandoLongPress && (to_ms_since_boot(get_absolute_time()) - tempoPressionado >= LONG_PRESS)) {
+            modo_op = GRAVACAO;
+            verificandoLongPress = false;
+        }
+        switch(modo_op)
+        {
+            case AGUARDANDO:
+            {
+                gpio_put(LED_G, 1);
+                gpio_put(LED_B, 0);
+                break;
+            }
+            case GRAVACAO:
+            {
+                gpio_put(LED_B, 1);
+                gpio_put(LED_G, 0);
+                gpio_put(LED_R, 0);
+                atualizar_historico(frequencias, amplitudes, MAX_FREQUENCIAS);
+                if (gpio_get(BTN_A)) {
+                    modo_op = AGUARDANDO;
+                    gpio_put(LED_B, 0);
+
+                }
+                break;
+            }
+            case MONITORAMENTO:
+            {
+                // bool led = ;
+                gpio_put(LED_R, verificar_frequencias(frequencias, amplitudes));
+                gpio_put(LED_G, 0);
+                gpio_put(LED_B, 0);
+                break;
+            }
+        }
+        cyw43_arch_poll(); // Necessário para manter o Wi-Fi ativo
+    }
+}
+
+float calc_frequencia_dominante(float *real, float *imag, int n, float fs) {
+    int pico_idx = 0;
+    float maximo = 0.0f;
+    
+    for (int i = 1; i < n / 2; i++) { // Ignorar o bin 0 (componente DC)
+        float magnitude = sqrtf(real[i] * real[i] + imag[i] * imag[i]);
+        if (magnitude > maximo) {
+            maximo = magnitude;
+            pico_idx = i;
+        }
+    }
+    return (pico_idx * fs) / n;
+}
+
+void calc_frequencias_dominantes(float *real, float *imag, int n, float fs, 
+    float *freqs, float *amps, int max_freqs) {
+    int indices[max_freqs]; // Índices dos picos
+    float magnitudes[n / 2]; // Armazena as magnitudes
+
+    // Calcula a magnitude para cada bin de frequência
+    for (int i = 1; i < n / 2; i++) { // Ignorar bin 0 (DC)
+        magnitudes[i] = sqrtf(real[i] * real[i] + imag[i] * imag[i]);
+    }
+
+    // Encontra os índices das maiores amplitudes
+    for (int k = 0; k < max_freqs; k++) {
+        int pico_idx = 1;
+        float maximo = 0.0f;
+
+        for (int i = 1; i < n / 2; i++) {
+            if (magnitudes[i] > maximo) {
+            maximo = magnitudes[i];
+            pico_idx = i;
+            }
+        }
+
+        // Salva os valores
+        freqs[k] = (pico_idx * fs) / n;
+        amps[k] = maximo;
+
+        // Zera o valor encontrado para evitar repetições
+        magnitudes[pico_idx] = 0.0f;
+    }
+}
+
+void fft_radix2(float real[], float imag[], int n) {
+    unsigned int j = 0;
+    for (unsigned int i = 1; i < n - 1; i++) {
+        unsigned int bit = n >> 1;
+        while (j >= bit) {
+            j -= bit;
+            bit >>= 1;
+        }
+        j += bit;
+        if (i < j) {
+            // Swap
+            float temp = real[i];
+            real[i] = real[j];
+            real[j] = temp;
+            temp = imag[i];
+            imag[i] = imag[j];
+            imag[j] = temp;
+        }
+    }
+
+    for (unsigned int len = 2; len <= n; len <<= 1) {
+        unsigned int half_len = len >> 1;
+        unsigned int lut_step = n / len;
+        for (unsigned int i = 0; i < n; i += len) {
+            for (unsigned int j = 0; j < half_len; j++) {
+                unsigned int lut_idx = j * lut_step;
+                float cos_val = cos_lut[lut_idx];
+                float sin_val = sin_lut[lut_idx];
+                float temp_real = cos_val * real[i + j + half_len] - sin_val * imag[i + j + half_len];
+                float temp_imag = sin_val * real[i + j + half_len] + cos_val * imag[i + j + half_len];
+                real[i + j + half_len] = real[i + j] - temp_real;
+                imag[i + j + half_len] = imag[i + j] - temp_imag;
+                real[i + j] += temp_real;
+                imag[i + j] += temp_imag;
+            }
+        }
+    }
+}
+
+void gerar_lut(int n) {
+    for (int i = 0; i < n / 2; i++) {
+        float ang = -2.0f * 3.14159265f * i / n;
+        sin_lut[i] = sin(ang);
+        cos_lut[i] = cos(ang);
+    }
+}
+
+void amostrar_mic(int n) {
+    adc_fifo_drain();
+    adc_run(false);
+
+    dma_channel_configure(dma_channel, &dma_cfg,
+                          adc_buffer,
+                          &(adc_hw->fifo),
+                          n,
+                          true);
+
+    adc_run(true);
+    dma_channel_wait_for_finish_blocking(dma_channel);
+    adc_run(false);
+}
+
+// Funções do monitor
+void print_texto(int x, int y, int tam, char * msg){
+    ssd1306_draw_string(&disp, x, y, tam, msg);
+    ssd1306_show(&disp);
+}
+
+void plot_espectro(){
+    ssd1306_clear(&disp);
+    print_texto(4, 0, 1, "~~ Espectech ~~");
+    char freq_str[16];
+    snprintf(freq_str, sizeof(freq_str), "%.2f Hz", freq_dominante);
+    print_texto(2, 10, 2, freq_str);
+    
+    int largura_barra = 3;
+    int espacamento = 1;
+    int x_offset = 4; // Margem esquerda
+    int y_base = 60; // Posição base do gráfico
+    int altura_maxima = disp.height / 2; // Metade da altura do monitor
+    int base_y = disp.height - 1;
+
+    preencher_barras();
+    
+    for (int i = 0; i < NUM_BARRAS; i++) {
+        int altura = espectro[i]; // Simulação de espectro
+        int x = i * (largura_barra + espacamento);
+        for(int j = 0; j <= altura; j++){
+            ssd1306_draw_pixel(&disp, x, base_y - j);
+        }
+    }
+    
+    ssd1306_show(&disp);
+}
+
+/*
+As barras atualmente estão destacando o valor mais alto
+entre os bins de cada janela. As janelas estão divididas
+sw acordo com o número de amostras e número de barras
+sendo representadas.
+*/
+void preencher_barras(){
+    int altura_maxima = disp.height / 2; // Metade da altura do monitor
+    static int janela = SAMPLES / NUM_BARRAS / 2;
+    float max_valor = 256.0; 
+
+    for(int i = 0; i < NUM_BARRAS; i++){
+        espectro[i] = 0;
+        int mag = 0;
+        for(int j = 1; j < janela; j++){
+            mag += real[i * janela + j] * real[i * janela + j] +
+                   imag[i * janela + j] * imag[i * janela + j];
+            if (mag > espectro[i]) espectro[i] = mag;
+        }
+        espectro[i] = sqrt(espectro[i]);
+
+        // Normalização linear para ajustar ao display
+        espectro[i] = (espectro[i] / (max_valor/8)) * altura_maxima;
+
+        // Saturar
+        if (espectro[i] > altura_maxima) {
+            espectro[i] = altura_maxima;
+        }
+    }
+}
+
+void setup_timer_menu(){
+    static repeating_timer_t timer;
+    add_repeating_timer_ms(-500, callback_timer, NULL, &timer);
+}
+
+bool callback_timer(repeating_timer_t *t){
+    plot_espectro();
+    return true; // Continuar repetindo
+}
+
+// Funções de detecção de frequências
+/**
+ * Atualiza o histórico de frequências monitoradas
+ * Armazena as frequências detectadas e suas amplitudes ao longo do tempo.
+ */
+void atualizar_historico(float *frequencias, float *amplitudes, int num_freqs) {
+    // Atualizar buffer circular
+    for (int i = 0; i < num_freqs && i < MAX_FREQUENCIAS; i++) {
+        if (amplitudes[i] > 1.0) {
+            historico_amplitudes[historico_index][i] = amplitudes[i];
+        } else {
+            historico_amplitudes[historico_index][i] = 0;  // Não registra se for menor ou igual a 1.0
+        }
+    }
+
+    historico_index = (historico_index + 1) % HISTORICO_SIZE;  // Avança no buffer
+    if (historico_cont < HISTORICO_SIZE) historico_cont++;  // Evita overflow no início
+
+    // Atualizar estatísticas das frequências
+    for (int i = 0; i < num_freqs && i < MAX_FREQUENCIAS; i++) {
+        int ocorrencias = 0;
+        float soma_amplitudes = 0.0;
+
+        // Percorrer o histórico para contar ocorrências e calcular média
+        for (int j = 0; j < historico_cont; j++) {
+            if (historico_amplitudes[j][i] > 0) {
+                ocorrencias++;
+                soma_amplitudes += historico_amplitudes[j][i];
+            }
+        }
+
+        if (ocorrencias > 0) {
+            historico_frequencias[i].frequencia = frequencias[i];
+            historico_frequencias[i].amplitude_media = soma_amplitudes / ocorrencias;
+            historico_frequencias[i].ocorrencias = ocorrencias;
+        }
+    }
+}
+
+bool verificar_frequencias(float *frequencias, float *amplitudes) {
+    for (int i = 0; i < MAX_FREQUENCIAS; i++) {
+        for (int j = 0; j < MAX_FREQUENCIAS; j++) {
+            if (historico_frequencias[j].ocorrencias > (HISTORICO_SIZE * LIMIAR_CONSISTENCIA)
+            && fabs(frequencias[i] - historico_frequencias[j].frequencia) < TOLERANCIA_FREQ
+            && amplitudes[i] > LIMIAR_AMPLITUDE) { 
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+void botao_pressionado(uint gpio, uint32_t events){
+    uint32_t tempoAtual = to_ms_since_boot(get_absolute_time());
+    if ((tempoAtual - ultimoDebounce) > DEBOUNCE_MS) {
+        ultimoDebounce = tempoAtual;
+        if (!gpio_get(BTN_A)) {  // Botão pressionado
+            tempoPressionado = tempoAtual;
+            verificandoLongPress = true;
+        } else {  // Botão solto
+            verificandoLongPress = false;
+            uint32_t duracao = tempoAtual - tempoPressionado;
+            if (duracao < LONG_PRESS) {
+                if(modo_op == AGUARDANDO) modo_op = MONITORAMENTO;
+                else if(modo_op == MONITORAMENTO) modo_op = AGUARDANDO;
+            } 
+        }
+    }
+}
+

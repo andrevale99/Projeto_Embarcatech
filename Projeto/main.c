@@ -26,10 +26,10 @@
 #define MAX_LEN_BUFFER UINT8_MAX // Tamanho maximo do buffer
 
 // GPIOS e Canais ADC's do joystick (debug)
-#define JOY_X_AXIS 26            // Pino de leitura do eixo X do joystick (conectado ao ADC)
-#define JOY_Y_AXIS 27            // Pino de leitura do eixo Y do joystick (conectado ao ADC)
-#define JOY_ADC_CHANNEL_X_AXIS 0 // Canal ADC para o eixo X do joystick
-#define JOY_ADC_CHANNEL_Y_AXIS 1 // Canal ADC para o eixo Y do joystick
+#define JOY_Y_AXIS 26            // Pino de leitura do eixo X do joystick (conectado ao ADC)
+#define JOY_X_AXIS 27            // Pino de leitura do eixo Y do joystick (conectado ao ADC)
+#define JOY_ADC_CHANNEL_Y_AXIS 0 // Canal ADC para o eixo X do joystick
+#define JOY_ADC_CHANNEL_X_AXIS 1 // Canal ADC para o eixo Y do joystick
 #define JOY_BUTTON 22            // Pino de leitura do botão do joystick
 
 #define LED_R 13
